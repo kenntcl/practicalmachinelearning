@@ -1,0 +1,189 @@
+---
+title: "**Practical Machine Learning Course Project**"
+date: "**Sunday, March 08, 2015**"
+output: html_document
+---
+
+This document is the course project for the "Practical Machine Learning" MOOC from Johns Hopkins University.
+
+**Executive Summary**
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.
+
+First, we will load and clean the data set by removing all columns with NA's or with empty values as well as columns that are not predictor variables.
+
+Next, we will split training data into 60% subTraining and 40% subTesting data.
+
+Finally, we will implement a Random Forest model. Upon evaluating the model, we get an accuracy of 99%. With this accuracy, we use the model to predict on the original testing data set.
+
+**Data**
+
+The training data for this project are available here: 
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here: 
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har>. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+<h3>**Preliminary Work**</h3>
+
+**Reproduceability**
+
+An overall pseudo-random number generator seed is set at 1234 for all codes. To ensure that the results below are reproducible, the same seed should be used.
+
+Different packages such as caret and randomForest are downloaded and installed.
+
+**Model Building**
+
+Our outcome variable will be classe, a factor variable with 5 levels. For this data set, "participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions:
+
+```r{}
+- exactly according to the specification (Class A)
+- throwing the elbows to the front (Class B)
+- lifting the dumbbell only halfway (Class C)
+- lowering the dumbbell only halfway (Class D)
+- throwing the hips to the front (Class E)
+```
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes." [1]
+
+Prediction evaluations will be based on maximizing the accuracy and minimizing the out-of-sample error. All other available variables after cleaning will be used for prediction.
+
+The model will be tested using Random Forest algorithm, after which we will use the model to predict on the original testing data set.
+
+**Cross-validation**
+
+Cross-validation will be performed by subsampling our training data set randomly without replacement into 2 subsamples: subTraining data (60% of the original Training data set) and subTesting data (40%). Our model will be fitted on the subTraining data set, and tested on the subTesting data set.
+
+**Expected out-of-sample error**
+
+The expected out-of-sample error will correspond to the quantity: 1-accuracy in the cross-validation data. Accuracy is the proportion of correct classified observation over the total sample in the subTesting data set. Expected accuracy is the expected accuracy in the out-of-sample data set (i.e. original testing data set). Thus, the expected value of the out-of-sample error will correspond to the expected number of missclassified observations/total observations in the Test data set, which is the quantity: 1-accuracy found from the cross-validation data set.
+
+**Reasons for my choices**
+
+Our outcome variable "classe" is an unordered factor variable. Thus, we can choose our error type as 1-accuracy. We have a large sample size with N= 19622 in the Training data set. This allow us to divide our Training sample into subTraining and subTesting to allow cross-validation. Features with all missing values will be discarded as well as features that are irrelevant. All other features will be kept as relevant variables.
+
+Random Forest algorithm is known for their ability of detecting the features that are important for classification. Feature selection is inherent, so it is not so necessary at the data preparation phase. Thus, there won't be any feature selection section in this report.
+
+<h3>**Data Processing**</h3>
+
+Installing packages, loading libraries, and setting the seed for reproduceability:
+```{r}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(randomForest)
+```
+
+Setting the overall seed for reproducible results
+```{r}
+set.seed(1234)
+```
+
+**Loading data sets and preliminary cleaning**
+
+Firstly, the data sets are loaded into R and make sure that the missing values are coded correctly. Irrelevant variables will be deleted.
+
+```{r, cache=TRUE}
+# Assuming both data sets are already saved into my working directory
+# Some missing values are coded as string "#DIV/0!" or "" or "NA" - these will be changed to NA.
+# Both data sets contain columns with all missing values - these will be deleted.
+
+# Loading the training data set into my R session replacing all missing with "NA"
+trainingset <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+
+# Loading the testing data set 
+testingset <- read.csv('pml-testing.csv', na.strings=c("NA","#DIV/0!", ""))
+
+# Check dimensions for number of variables and number of observations
+dim(trainingset)
+dim(testingset)
+
+# Delete columns with all missing values
+trainingset<-trainingset[,colSums(is.na(trainingset)) == 0]
+testingset <-testingset[,colSums(is.na(testingset)) == 0]
+
+# Some variables are irrelevant to our current project: user_name, raw_timestamp_part_1, raw_timestamp_part_,2 cvtd_timestamp, new_window, and  num_window (columns 1 to 7). We can delete these variables.
+trainingset   <-trainingset[,-c(1:7)]
+testingset <-testingset[,-c(1:7)]
+
+# and have a look at our new datasets:
+dim(trainingset)
+dim(testingset)
+head(trainingset)
+head(testingset)
+```
+
+**Partitioning the training data set to allow cross-validation**
+
+The training data set contains 53 variables and 19622 obs.
+
+The testing data set contains 53 variables and 20 obs.
+
+In order to perform cross-validation, the training data set is partitioned into 2 sets: subTraining (60%) and subTesting (40%).
+
+This will be performed using random subsampling without replacement.
+```{r}
+subsamples <- createDataPartition(y=trainingset$classe, p=0.60, list=FALSE)
+subTraining <- trainingset[subsamples, ] 
+subTesting <- trainingset[-subsamples, ]
+dim(subTraining)
+dim(subTesting)
+head(subTraining)
+head(subTesting)
+```
+
+**Taking a look at the new data**
+
+The variable "classe" contains 5 levels: A, B, C, D and E. A plot of the outcome variable will allow us to see the frequency of each levels in the subTraining data set and compare one another.
+```{r}
+plot(subTraining$classe, col="orange", main="Bar Plot of levels of the variable classe within the subTraining data set", xlab="classe levels", ylab="Frequency")
+```
+
+From the graph above, we can see that each level frequency is within the same order of magnitude of each other. Level A is the most frequent with more than 3000 occurrences while level D is the least frequent with about 1800 occurrences.
+
+**Prediction model: Using Random Forest**
+
+Next, we shall implement Random Forest algorithm on the subTesting data set.
+```{r}
+model <- randomForest(classe ~. , data=subTraining, method="class")
+
+# Predicting:
+prediction <- predict(model, subTesting, type = "class")
+
+# Test results on subTesting data set:
+confusionMatrix(prediction, subTesting$classe)
+```
+
+The accuracy of the model using Random Forest algorithm is 0.993. The expected out-of-sample error is estimated at 0.007, or 0.7%. The expected out-of-sample error is calculated as 1 - accuracy for predictions made against the cross-validation set. Our Test data set comprises of 20 cases. With an accuracy of above 99% on our cross-validation data set, we can expect that very few or none of the test samples will be missclassified.
+
+<h3>**Submission**</h3>
+
+```{r}
+# predict outcome levels on the original Testing data set using Random Forest algorithm
+predictfinal <- predict(model, testingset, type="class")
+predictfinal
+```
+
+```{r}
+# Write files for submission
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictfinal)
+```
+
+<h3>**Reference**</h3>
+
+[1] Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
